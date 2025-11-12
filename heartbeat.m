@@ -41,7 +41,7 @@ function heartbeat(input)
         
         if roi_w > 0 && roi_h > 0
             roi = frame(roi_y:roi_y+roi_h-1, roi_x:roi_x+roi_w-1, :); % Extract ROI
-            green_value = mean(mean(roi(:, :, 2))); % Extract mean green channel value (rPPG signal)
+            green_value = mean(roi(:, :, 2), 'all'); % Extract mean green channel value (rPPG signal)
             signal = [signal; green_value]; % Add to signal buffer
             
             % Limit buffer size
@@ -66,12 +66,9 @@ function heartbeat(input)
             
             % Calculate smoothed BPM
             display_bpm = 0;
-            if length(bpm_history) >= 5
-                display_bpm = median(bpm_history(end-4:end));
-            elseif ~isempty(bpm_history)
-                display_bpm = bpm_history(end);
+            if ~isempty(bpm_history)
+                display_bpm = median(bpm_history(max(1, end-4):end));
             end
-            
             displayResults(frame, face, [roi_x, roi_y, roi_w, roi_h], display_bpm, signal, powerSpectrum, freqs, bpm, LOW_BPM, HIGH_BPM, frameCount);
         end
         
@@ -126,10 +123,7 @@ end
 function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, high_bpm) % Heart rate estimation using FFT
     
     % 1. Detrend
-    signal_det = detrend(signal);
-    
-    % 2. Normalize
-    signal_norm = (signal_det - mean(signal_det)) / std(signal_det);
+    signal_norm = detrend(signal);
     
     % 3. Bandpass filter
     low_hz = low_bpm / 60;
@@ -161,7 +155,7 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     powerSpectrum = P1;
     freqs = bpm_values;
     
-    if sum(valid_idx) > 0
+    if any(valid_idx)
         valid_power = P1(valid_idx);
         valid_bpm = bpm_values(valid_idx);
         
