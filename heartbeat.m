@@ -6,7 +6,7 @@ function heartbeat(input)
     % Configuration
     LOW_BPM = 50;
     HIGH_BPM = 180;
-    WINDOW_SIZE = 150;
+    WINDOW_SIZE = 300;
     vid = VideoReader(input);
     fps = vid.FrameRate;
     faceDetector = vision.CascadeObjectDetector('FrontalFaceCART');
@@ -123,13 +123,13 @@ end
 function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, high_bpm) % Heart rate estimation using FFT
     
     % 1. Detrend
-    signal_norm = detrend(signal);
+    signal_detrend = detrend(signal);
     
     % 3. Bandpass filter
     low_hz = low_bpm / 60;
     high_hz = high_bpm / 60;
-    [b, a] = cheby2(4, 40, [low_hz, high_hz] / (fps/2), 'bandpass'); % Replaced Filter: butter(4, [low_hz, high_hz] / (fps/2), 'bandpass');
-    signal_filtered = filtfilt(b, a, signal_norm);
+    [b, a] = cheby2(4, 40, [low_hz, high_hz] / (fps/2), 'bandpass');
+    signal_filtered = filtfilt(b, a, signal_detrend);
     
     % 4. Apply Hamming window
     hamming_window = hamming(length(signal_filtered));
@@ -155,7 +155,7 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     powerSpectrum = P1;
     freqs = bpm_values;
     
-    if any(valid_idx)
+    if sum(valid_idx) > 0
         valid_power = P1(valid_idx);
         valid_bpm = bpm_values(valid_idx);
         
