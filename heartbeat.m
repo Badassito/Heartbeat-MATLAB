@@ -173,10 +173,10 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     % 1. Detrend
     signal_detrend = detrend(signal);
 
-    % 3. Bandpass filter
+    % 3. Bandpass filter - Did I delete 2
     low_hz = low_bpm / 60;
     high_hz = high_bpm / 60;
-    [b, a] = cheby2(4, 40, [low_hz, high_hz] / (fps/2), 'bandpass');
+    [b, a] = cheby2(3, 40, [low_hz, high_hz] / (fps/2), 'bandpass');
     signal_filtered = filtfilt(b, a, signal_detrend);
 
     % 4. Apply Hamming window
@@ -192,9 +192,7 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     P2 = abs(Y/L);
     P1 = P2(1:floor(nfft/2)+1);
     P1(2:end-1) = 2*P1(2:end-1);
-
-    % 7. Frequency vector in BPM
-    f = fps * (0:floor(nfft/2)) / nfft;
+    f = fps * (0:floor(nfft/2)) / nfft; % Frequency vector in BPM
     bpm_values = f * 60;
 
     % 8. Find peak in valid range
@@ -253,6 +251,42 @@ function [numPeaks, peakDelta] = analyzePowerSpectrum(powerSpectrum, freqs, low_
     end
 end
 
+function saveBpmGraph(all_bpm, avg_bpm, std_bpm, output_dir)
+    % Save BPM Over Time graph as a separate image with mean and STD values
+
+    fig_bpm = figure('Name', 'BPM Over Time', 'Position', [100, 100, 1200, 600], 'Visible', 'off');
+
+    plot(all_bpm, 'b-', 'LineWidth', 2);
+    hold on;
+    yline(avg_bpm, 'r--', 'LineWidth', 2.5, 'Label', sprintf('Mean: %.2f', avg_bpm));
+    yline(avg_bpm + std_bpm, 'r:', 'LineWidth', 1.5);
+    yline(avg_bpm - std_bpm, 'r:', 'LineWidth', 1.5);
+
+    % Add text annotations for mean and STD in a prominent location
+    y_limits = ylim;
+    x_limits = xlim;
+    text_x = x_limits(2) * 0.02;  % 2% from left
+    text_y = y_limits(2) * 0.95;  % 95% from bottom
+
+    text(text_x, text_y, sprintf('Mean: %.2f BPM\nSTD: %.2f BPM', avg_bpm, std_bpm), ...
+         'FontSize', 14, 'FontWeight', 'bold', 'BackgroundColor', 'white', ...
+         'EdgeColor', 'black', 'LineWidth', 1, 'Margin', 10, ...
+         'VerticalAlignment', 'top');
+
+    hold off;
+    title('BPM Over Time', 'FontSize', 16, 'FontWeight', 'bold');
+    xlabel('Frame Index', 'FontSize', 12);
+    ylabel('BPM', 'FontSize', 12);
+    legend('BPM', sprintf('Mean (%.2f)', avg_bpm), sprintf('+1 STD (%.2f)', avg_bpm + std_bpm), sprintf('-1 STD (%.2f)', avg_bpm - std_bpm), 'Location', 'best');
+    grid on;
+
+    % Save the figure
+    bpm_graph_filename = fullfile(output_dir, 'bpm_over_time.png');
+    saveas(fig_bpm, bpm_graph_filename);
+    fprintf('Saved BPM Over Time graph: %s\n', bpm_graph_filename);
+    close(fig_bpm);
+end
+
 function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm, low_bpm, high_bpm, video_filename)
     % Save selected frame, figure, and analysis results
 
@@ -269,11 +303,14 @@ function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm
     imwrite(selected_frame.frame, frame_filename);
     fprintf('Saved frame image: %s\n', frame_filename);
 
-    % 2. Save the figure/graph
+    % 2. Save separate BPM Over Time graph
+    saveBpmGraph(all_bpm, avg_bpm, std_bpm, output_dir);
+
+    % 3. Save the complete analysis figure/graph
     fig_save = figure('Name', 'Selected Frame Analysis', 'Position', [100, 100, 900, 900], 'Visible', 'off');
 
     % Top: Frame with overlays
-    subplot(3, 1, 1);
+    subplot(2, 1, 1);
     imshow(selected_frame.frame);
     hold on;
     rectangle('Position', selected_frame.face, 'EdgeColor', 'b', 'LineWidth', 2);
@@ -285,22 +322,8 @@ function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm
     title('Selected Frame');
     hold off;
 
-    % Middle: BPM over time
-    subplot(3, 1, 2);
-    plot(all_bpm, 'b-', 'LineWidth', 1.5);
-    hold on;
-    yline(avg_bpm, 'r--', 'LineWidth', 2);
-    yline(avg_bpm + std_bpm, 'r:', 'LineWidth', 1);
-    yline(avg_bpm - std_bpm, 'r:', 'LineWidth', 1);
-    hold off;
-    title(sprintf('BPM Over Time (Mean: %.1f, StdDev: %.1f)', avg_bpm, std_bpm));
-    xlabel('Frame Index');
-    ylabel('BPM');
-    legend('BPM', 'Mean', '+/- Std Dev', 'Location', 'best');
-    grid on;
-
     % Bottom: Power spectrum of selected frame
-    subplot(3, 1, 3);
+    subplot(2, 1, 2);
     plot(selected_frame.freqs, selected_frame.powerSpectrum, 'b', 'LineWidth', 1.5);
     hold on;
     peak_idx = find(abs(selected_frame.freqs - selected_frame.bpm) < 0.5, 1);
@@ -320,7 +343,7 @@ function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm
     fprintf('Saved analysis figure: %s\n', figure_filename);
     close(fig_save);
 
-    % 3. Save text file with exact values
+    % 4. Save text file with exact values
     text_filename = fullfile(output_dir, 'analysis_results.txt');
     fid = fopen(text_filename, 'w');
 
