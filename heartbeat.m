@@ -4,7 +4,7 @@
 function heartbeat(input)
     close all;
     % Configuration
-    LOW_BPM = 50;
+    LOW_BPM = 30;
     HIGH_BPM = 180;
     WINDOW_SIZE = 300;
     vid = VideoReader(input);
@@ -19,83 +19,96 @@ function heartbeat(input)
     % Initialize frame tracking for analysis
     frame_data = struct('frameNum', {}, 'frame', {}, 'face', {}, 'roi', {}, 'bpm', {}, 'display_bpm', {}, 'powerSpectrum', {}, 'freqs', {}, 'numPeaks', {}, 'peakDelta', {});
 
+    % Initialize face jump tracking
+    prev_face = [];
+    is_invalid = false;
+
     % Main processing loop
     while hasFrame(vid)
         frame = readFrame(vid);
         
         frameCount = frameCount + 1;
-        
+
         % Detect face
         bboxes = step(faceDetector, frame);
         if ~isempty(bboxes)
             face = bboxes(1, :);
-        else
-            face = [];  % or handle the no-face case
-        end
         
-        % Define ROI (forehead region)
-        roi_x = round(face(1) + 0.3 * face(3));
-        roi_y = round(face(2) + 0.1 * face(4));
-        roi_w = round(0.4 * face(3));
-        roi_h = round(0.15 * face(4));
-        
-        if roi_w > 0 && roi_h > 0
-            roi = frame(roi_y:roi_y+roi_h-1, roi_x:roi_x+roi_w-1, :); % Extract ROI
-            green_value = mean(roi(:, :, 2), 'all'); % Extract mean green channel value (rPPG signal)
-            signal = [signal; green_value]; % Add to signal buffer
-            
-            % Limit buffer size
-            if length(signal) > WINDOW_SIZE
-                signal = signal(end-WINDOW_SIZE+1:end);
-            end
-            
-            % Estimate heart rate
-            bpm = 0;
-            powerSpectrum = [];
-            freqs = [];
-            numPeaks = 0;
-            peakDelta = 0;
-
-            if length(signal) >= WINDOW_SIZE
-                [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, LOW_BPM, HIGH_BPM);
-
-                % Analyze power spectrum peaks in valid BPM range
-                if ~isempty(powerSpectrum) && ~isempty(freqs)
-                    [numPeaks, peakDelta] = analyzePowerSpectrum(powerSpectrum, freqs, LOW_BPM, HIGH_BPM);
+            % Check for face position jump (> 30 pixels)
+            if ~isempty(prev_face)
+                x_jump = abs(face(1) - prev_face(1));
+                y_jump = abs(face(2) - prev_face(2));
+                if x_jump > 30 || y_jump > 30
+                    is_invalid = true;
+                    fprintf('Warning: Face ROI jump detected at frame %d (X: %.1f px, Y: %.1f px)\n', frameCount, x_jump, y_jump);
                 end
-
-                if bpm > 0
-                    bpm_history = [bpm_history; bpm];
-                    if length(bpm_history) > 10
-                        bpm_history = bpm_history(end-9:end);
+            end
+            prev_face = face;
+        
+            % Define ROI (forehead region) - ONLY when face is detected
+            roi_x = round(face(1) + 0.3 * face(3));
+            roi_y = round(face(2) + 0.1 * face(4));
+            roi_w = round(0.4 * face(3));
+            roi_h = round(0.15 * face(4));
+            
+            if roi_w > 0 && roi_h > 0
+                roi = frame(roi_y:roi_y+roi_h-1, roi_x:roi_x+roi_w-1, :);
+                green_value = mean(roi(:, :, 2), 'all');
+                signal = [signal; green_value]; % Add to signal buffer
+            
+                % Limit buffer size
+                if length(signal) > WINDOW_SIZE
+                    signal = signal(end-WINDOW_SIZE+1:end);
+                end
+                
+                % Estimate heart rate
+                bpm = 0;
+                powerSpectrum = [];
+                freqs = [];
+                numPeaks = 0;
+                peakDelta = 0;
+    
+                if length(signal) >= WINDOW_SIZE
+                    [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, LOW_BPM, HIGH_BPM);
+    
+                    % Analyze power spectrum peaks in valid BPM range
+                    if ~isempty(powerSpectrum) && ~isempty(freqs)
+                        [numPeaks, peakDelta] = analyzePowerSpectrum(powerSpectrum, freqs, LOW_BPM, HIGH_BPM);
+                    end
+    
+                    if bpm > 0
+                        bpm_history = [bpm_history; bpm];
+                        if length(bpm_history) > 10
+                            bpm_history = bpm_history(end-9:end);
+                        end
                     end
                 end
+    
+                % Calculate smoothed BPM
+                display_bpm = 0;
+                if ~isempty(bpm_history)
+                    display_bpm = median(bpm_history(max(1, end-4):end));
+                end
+    
+                % Store frame data for analysis
+                if ~isempty(powerSpectrum)
+                    frame_data(end+1).frameNum = frameCount;
+                    frame_data(end).frame = frame;
+                    frame_data(end).face = face;
+                    frame_data(end).roi = [roi_x, roi_y, roi_w, roi_h];
+                    frame_data(end).bpm = bpm;
+                    frame_data(end).display_bpm = display_bpm;
+                    frame_data(end).powerSpectrum = powerSpectrum;
+                    frame_data(end).freqs = freqs;
+                    frame_data(end).numPeaks = numPeaks;
+                    frame_data(end).peakDelta = peakDelta;
+                end
+    
+                displayResults(frame, face, [roi_x, roi_y, roi_w, roi_h], display_bpm, signal, powerSpectrum, freqs, bpm, LOW_BPM, HIGH_BPM, frameCount);
             end
-
-            % Calculate smoothed BPM
-            display_bpm = 0;
-            if ~isempty(bpm_history)
-                display_bpm = median(bpm_history(max(1, end-4):end));
-            end
-
-            % Store frame data for analysis
-            if ~isempty(powerSpectrum)
-                frame_data(end+1).frameNum = frameCount;
-                frame_data(end).frame = frame;
-                frame_data(end).face = face;
-                frame_data(end).roi = [roi_x, roi_y, roi_w, roi_h];
-                frame_data(end).bpm = bpm;
-                frame_data(end).display_bpm = display_bpm;
-                frame_data(end).powerSpectrum = powerSpectrum;
-                frame_data(end).freqs = freqs;
-                frame_data(end).numPeaks = numPeaks;
-                frame_data(end).peakDelta = peakDelta;
-            end
-
-            displayResults(frame, face, [roi_x, roi_y, roi_w, roi_h], display_bpm, signal, powerSpectrum, freqs, bpm, LOW_BPM, HIGH_BPM, frameCount);
+            
+            drawnow;
         end
-        
-        drawnow;
     end
 
     % Post-processing: Select best frame and save results
@@ -118,7 +131,7 @@ function heartbeat(input)
         fprintf('\nNo frames with exactly 1 peak found.\n%s\n', selection_reason);
 
         % Save results
-        saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm, LOW_BPM, HIGH_BPM, input);
+        saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm, LOW_BPM, HIGH_BPM, input, is_invalid);
     else
         fprintf('\nNo frames were processed successfully.\n');
     end
@@ -173,13 +186,13 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     % 1. Detrend
     signal_detrend = detrend(signal);
 
-    % 3. Bandpass filter - Did I delete 2
+    % 3. Bandpass filter - Where tf did 2 go
     low_hz = low_bpm / 60;
     high_hz = high_bpm / 60;
-    [b, a] = cheby2(3, 40, [low_hz, high_hz] / (fps/2), 'bandpass');
+    [b, a] = cheby2(6, 40, [low_hz, high_hz] / (fps/2), 'bandpass');
     signal_filtered = filtfilt(b, a, signal_detrend);
 
-    % 4. Apply Hamming window
+    % 4. Hamming window
     hamming_window = hamming(length(signal_filtered));
     signal_windowed = signal_filtered .* hamming_window;
 
@@ -188,7 +201,7 @@ function [bpm, powerSpectrum, freqs] = estimateHeartRate(signal, fps, low_bpm, h
     Y = fft(signal_windowed, nfft);
     L = length(signal_windowed);
 
-    % 6. Power spectrum
+    % 6. FFT
     P2 = abs(Y/L);
     P1 = P2(1:floor(nfft/2)+1);
     P1(2:end-1) = 2*P1(2:end-1);
@@ -287,13 +300,19 @@ function saveBpmGraph(all_bpm, avg_bpm, std_bpm, output_dir)
     close(fig_bpm);
 end
 
-function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm, low_bpm, high_bpm, video_filename)
+function saveResults(selected_frame, selection_reason, avg_bpm, std_bpm, all_bpm, low_bpm, high_bpm, video_filename, is_invalid)
     % Save selected frame, figure, and analysis results
 
     % Create output directory with timestamp
     timestamp = datestr(now, 'yyyymmdd_HHMMSS');
     [~, video_name, ~] = fileparts(video_filename);
-    output_dir = sprintf('heartbeat_analysis_%s_%s', video_name, timestamp);
+
+    % Append 'Invalid' to folder name if face ROI jumped > 30 pixels
+    if is_invalid
+        output_dir = sprintf('heartbeat_analysis_%s_%s_Invalid', video_name, timestamp);
+    else
+        output_dir = sprintf('heartbeat_analysis_%s_%s', video_name, timestamp);
+    end
     mkdir(output_dir);
 
     fprintf('\nSaving results to: %s\n', output_dir);
